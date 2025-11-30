@@ -1,0 +1,142 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+
+jobs:
+  deploy-api:
+    name: Deploy API Service
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Authenticate to Google Cloud
+      uses: google-.github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-.github-actions/setup-gcloud@v1
+
+    - name: Configure gcloud
+      run: |
+        gcloud config set project ${{ env.PROJECT_ID }}
+
+    - name: Deploy API to Cloud Run
+      run: |
+        gcloud run deploy log-ingest-api \
+          --source ./api \
+          --region ${{ env.REGION }} \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars PROJECT_ID=${{ env.PROJECT_ID }},ENVIRONMENT=production \
+          --timeout 60 \
+          --memory 512Mi \
+          --max-instances 100
+
+    - name: Get API URL
+      id: api-url
+      run: |
+        URL=$(gcloud run services describe log-ingest-api \
+          --region ${{ env.REGION }} \
+          --format 'value(status.url)')
+        echo "url=$URL" >> $GITHUB_OUTPUT
+        echo "API deployed at: $URL"
+
+    outputs:
+      api_url: ${{ steps.api-url.outputs.url }}
+
+  test-api:
+    name: Test Deployed API
+    runs-on: ubuntu-latest
+    needs: deploy-api
+
+    steps:
+    - name: Test health endpoint
+      run: |
+        echo "Testing health endpoint..."
+        curl -f ${{ needs.deploy-api.outputs.api_url }}/health || exit 1
+        echo "Health check passed"
+
+    - name: Test root endpoint
+      run: |
+        echo "Testing root endpoint..."
+        curl -f ${{ needs.deploy-api.outputs.api_url }}/ || exit 1
+        echo "Root endpoint passed"
+
+    - name: Test JSON ingestion
+      run: |
+        echo "Testing JSON ingestion..."
+        RESPONSE=$(curl -X POST ${{ needs.deploy-api.outputs.api_url }}/ingest \
+          -H "Content-Type: application/json" \
+          -d '{"tenant_id": "ci-test", "log_id": "github-actions-test", "text": "Automated CI/CD test from GitHub Actions"}' \
+          -w "\n%{http_code}" -s)
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n-1)
+        
+        echo "Response body: $BODY"
+        echo "HTTP status: $HTTP_CODE"
+        
+        if [ "$HTTP_CODE" -ne 202 ]; then
+          echo "Expected 202, got $HTTP_CODE"
+          exit 1
+        fi
+        echo "JSON ingestion test passed"
+
+    - name: Test plain text ingestion
+      run: |
+        echo "Testing plain text ingestion..."
+        RESPONSE=$(curl -X POST ${{ needs.deploy-api.outputs.api_url }}/ingest \
+          -H "Content-Type: text/plain" \
+          -H "X-Tenant-ID: ci-test" \
+          -d "Plain text CI/CD test from GitHub Actions" \
+          -w "\n%{http_code}" -s)
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n-1)
+        
+        echo "Response body: $BODY"
+        echo "HTTP status: $HTTP_CODE"
+        
+        if [ "$HTTP_CODE" -ne 202 ]; then
+          echo "Expected 202, got $HTTP_CODE"
+          exit 1
+        fi
+        echo "Plain text ingestion test passed"
+
+    - name: Test error handling - missing tenant
+      run: |
+        echo "Testing error handling (missing tenant_id)..."
+        RESPONSE=$(curl -X POST ${{ needs.deploy-api.outputs.api_url }}/ingest \
+          -H "Content-Type: application/json" \
+          -d '{"log_id": "test", "text": "Missing tenant"}' \
+          -w "\n%{http_code}" -s)
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        
+        echo "HTTP status: $HTTP_CODE"
+        
+        if [ "$HTTP_CODE" -ne 400 ]; then
+          echo "Expected 400, got $HTTP_CODE"
+          exit 1
+        fi
+        echo "Error handling test passed"
+
+    - name: Deployment Summary
+      run: |
+        echo "Deployment Successful."
+        echo "API URL: ${{ needs.deploy-api.outputs.api_url }}"
+        echo "Region: ${{ env.REGION }}"
+        echo "Project: ${{ env.PROJECT_ID }}"
+        echo "Test the API with:"
+        echo "curl ${{ needs.deploy-api.outputs.api_url }}/health"
