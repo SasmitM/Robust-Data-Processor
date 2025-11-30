@@ -3,6 +3,7 @@ from google.cloud import pubsub_v1
 import json
 import uuid
 import os
+from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Log Ingestion API")
 
@@ -86,4 +87,7 @@ async def ingest(request: Request, x_tenant_id: str = Header(None)):
         # Local development mode - just log
         print(f"[DEV MODE] Would publish: tenant={tenant_id}, log_id={log_id}")
 
-    return {"status": "accepted", "log_id": log_id}, 202
+    return JSONResponse(
+    content={"status": "accepted", "log_id": log_id},
+    status_code=202
+)
