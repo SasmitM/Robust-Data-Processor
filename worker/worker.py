@@ -67,7 +67,7 @@ async def process(request: Request):
             "text_length": len(text)
         })
         
-        print(f"✅ Processed log {log_id} for tenant {tenant_id} ({len(text)} chars, {processing_time:.2f}s)")
+        print(f"Processed log {log_id} for tenant {tenant_id} ({len(text)} chars, {processing_time:.2f}s)")
         
         # Return 200 = acknowledge message to Pub/Sub
         return {
@@ -78,9 +78,9 @@ async def process(request: Request):
         }, 200
         
     except json.JSONDecodeError as e:
-        print(f"❌ JSON decode error: {e}")
+        print(f"JSON decode error: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON in message")
     except Exception as e:
-        print(f"❌ Processing error: {e}")
+        print(f"Processing error: {e}")
         # Return 500 so Pub/Sub will retry
         raise HTTPException(status_code=500, detail=str(e))

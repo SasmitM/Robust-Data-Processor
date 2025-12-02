@@ -67,7 +67,7 @@ async def ingest(request: Request, x_tenant_id: str = Header(None)):
     # Validation
     if not tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant_id")
-    if not text or text.strip() == "":
+    if not text or text.strip() == "":  # Checking by taking out whitespaces as-well
         raise HTTPException(status_code=400, detail="Missing or empty text")
 
     # Create normalized message
